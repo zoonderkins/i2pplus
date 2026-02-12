@@ -3,11 +3,11 @@ set -e
 
 # Default JVM heap size
 if [ -z $JVM_XMX ]; then
-    echo "[startapp] Using the default 512MB JVM heap limit for I2P+..."
-    echo "[startapp] To configure a different maximum value, change the JVM_XMX"
-    echo "[startapp] variable value in startapp.sh (for example JVM_XMX=1024m)"
+    echo "[startapp] Using the default 2048MB JVM heap limit for I2P+..."
+    echo "[startapp] To configure a different maximum value, set the JVM_XMX"
+    echo "[startapp] environment variable (for example JVM_XMX=4096m)"
     echo ""
-    JVM_XMX=512m
+    JVM_XMX=2048m
 fi
 
 # Manually configure an ip address to use for I2P+ service access
@@ -38,11 +38,11 @@ export CLASSPATH
 if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
     echo "[startapp] Running I2P+ in docker container"
     if [ -z "$IP_ADDR" ]; then
-        export IP_ADDR=$(hostname -i)
+        export IP_ADDR=0.0.0.0
         echo ""
-        echo "[startapp] Note: To access I2P+ from other computers on your lan, set IP_ADDR to this host's lan ip,"
-        echo "[startapp] or 0.0.0.0 for access from anywhere - make sure your firewall permissions prevent access"
-        echo "[startapp] from the public internet if using 0.0.0.0"
+        echo "[startapp] Defaulting IP_ADDR to 0.0.0.0 (listen on all interfaces)."
+        echo "[startapp] To restrict access, set IP_ADDR to a specific ip (e.g. 192.168.1.10)"
+        echo "[startapp] and ensure your firewall prevents access from the public internet."
         echo ""
     fi
     echo "[startapp] Setting IP address for I2P+ console and service access to $IP_ADDR"
@@ -57,6 +57,13 @@ if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
             sed -i "s/localhost/$IP_ADDR/g" "$config_file"
         fi
     done
+
+    # Configure allowed hostnames for reverse proxy access
+    if [ -n "$ALLOWED_HOSTS" ]; then
+        echo "[startapp] Setting allowed hosts for console access: $ALLOWED_HOSTS"
+        sed -i "/^routerconsole\.allowedHosts=/d" router.config
+        echo "routerconsole.allowedHosts=$ALLOWED_HOSTS" >> router.config
+    fi
 fi
 
 # Set required Java options
@@ -65,7 +72,7 @@ JAVA_OPTS="-Djava.net.preferIPv4Stack=false -Djava.library.path=${I2P}:${I2P}/li
 # Launch I2P+
 echo "[startapp] Launching I2P+ ... please stand by ..."
 echo ""
-echo "[startapp] When I2P+ has started, review the existing UDP port on http://127.0.0.1:7667/info and ensure this port"
+echo "[startapp] When I2P+ has started, review the existing UDP port on http://$IP_ADDR:7667/info and ensure this port"
 echo "[startapp] is permitted for both TCP and UDP in your firewall, and port-forwarded from your network router or modem"
 echo "[startapp] in order to run the router at full capacity. Also be sure to configure your bandwidth settings."
 echo ""
