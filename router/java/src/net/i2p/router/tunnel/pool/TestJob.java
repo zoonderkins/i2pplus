@@ -44,9 +44,9 @@ public class TestJob extends JobImpl {
     private RatchetSessionTag _ratchetEncryptTag;
     private static final AtomicInteger __id = new AtomicInteger();
     private int _id;
-    private static final int MIN_TEST_PERIOD = 8*1000;
-    private static final int MAX_TEST_PERIOD = 15*1000;
-    private static final int MAX_TEST_PERIOD_ATTACK = 25*1000; // 25s during attacks
+    private static final int MIN_TEST_PERIOD = 10*1000;
+    private static final int MAX_TEST_PERIOD = 20*1000;
+    private static final int MAX_TEST_PERIOD_ATTACK = 30*1000; // 30s during attacks
 
     /**
      * Maximum number of tunnel tests that can run concurrently.
@@ -59,7 +59,7 @@ public class TestJob extends JobImpl {
     private static final int BASE_TEST_DELAY = 60 * 1000; // 60s base - increased frequency
     private static final int MIN_TEST_DELAY = 30 * 1000; // 30s minimum
     private static final int MAX_TEST_DELAY = 120 * 1000; // 120s maximum
-    private static final int SUCCESS_HISTORY_SIZE = 3; // Track last 3 results
+    private static final int SUCCESS_HISTORY_SIZE = 10; // Track last 10 results
 
     /**
      * Maximum number of TestJob instances that should be queued before deferring new ones.
@@ -545,6 +545,7 @@ public class TestJob extends JobImpl {
         }
 
         int current;
+        boolean concurrentTestStarted = false;
         do {
             current = CONCURRENT_TESTS.get();
             if (current >= maxTests) {
@@ -560,67 +561,82 @@ public class TestJob extends JobImpl {
                 return;
             }
         } while (!CONCURRENT_TESTS.compareAndSet(current, current + 1));
+        concurrentTestStarted = true;
 
-        // Begin tunnel test logic
-        _found = false;
-        long now = ctx.clock().now();
+        // Wrap the rest in try-finally to ensure cleanup on timeout/interruption
+        try {
+            // Begin tunnel test logic
+            _found = false;
+            long now = ctx.clock().now();
 
-        // Set test status to TESTING
-        _cfg.setTestStarted();
+            // Set test status to TESTING
+            _cfg.setTestStarted();
 
-        if (_cfg.isInbound()) {
-            _replyTunnel = _cfg;
-            _outTunnel = isExploratory ?
-                ctx.tunnelManager().selectOutboundTunnel() :
-                ctx.tunnelManager().selectOutboundTunnel(_pool.getSettings().getDestination());
-        } else {
-            _replyTunnel = isExploratory ?
-                ctx.tunnelManager().selectInboundTunnel() :
-                ctx.tunnelManager().selectInboundTunnel(_pool.getSettings().getDestination());
-            _outTunnel = _cfg;
-        }
-
-        _otherTunnel = (_outTunnel instanceof PooledTunnelCreatorConfig)
-            ? (PooledTunnelCreatorConfig) _outTunnel
-            : (_replyTunnel instanceof PooledTunnelCreatorConfig)
-                ? (PooledTunnelCreatorConfig) _replyTunnel
-                : null;
-
-        // Early viability guard
-        if (_replyTunnel == null || _outTunnel == null) {
-            if (_log.shouldWarn())
-                _log.warn("Insufficient tunnels to test " + _cfg + " with \n* " + _replyTunnel + " / " + _outTunnel);
-            ctx.statManager().addRateData("tunnel.testAborted", _cfg.getLength());
-            CONCURRENT_TESTS.decrementAndGet();
-            cleanupTunnelTracking();
-            decrementTotalJobs(); // Clean up total counter
-            return;
-        }
-
-        int testPeriod = getTestPeriod();
-        long testExpiration = now + testPeriod;
-
-        DeliveryStatusMessage m = new DeliveryStatusMessage(ctx);
-        m.setArrival(now);
-        m.setMessageExpiration(testExpiration);
-        m.setMessageId(ctx.random().nextLong(I2NPMessage.MAX_ID_VALUE));
-
-        ReplySelector sel = new ReplySelector(m.getMessageId(), testExpiration);
-        OnTestReply onReply = new OnTestReply();
-        OnTestTimeout onTimeout = new OnTestTimeout(now);
-        OutNetMessage msg = ctx.messageRegistry().registerPending(sel, onReply, onTimeout);
-        onReply.setSentMessage(msg);
-
-        boolean sendSuccess = sendTest(m, testPeriod);
-        if (!sendSuccess) {
-            CONCURRENT_TESTS.decrementAndGet();
-            cleanupTunnelTracking();
-            // Try to reschedule - if it fails, clean up total counter
-            if (!scheduleRetest(false)) {
-                decrementTotalJobs();
+            if (_cfg.isInbound()) {
+                _replyTunnel = _cfg;
+                _outTunnel = isExploratory ?
+                    ctx.tunnelManager().selectOutboundTunnel() :
+                    ctx.tunnelManager().selectOutboundTunnel(_pool.getSettings().getDestination());
+            } else {
+                _replyTunnel = isExploratory ?
+                    ctx.tunnelManager().selectInboundTunnel() :
+                    ctx.tunnelManager().selectInboundTunnel(_pool.getSettings().getDestination());
+                _outTunnel = _cfg;
             }
-            return;
+
+            _otherTunnel = (_outTunnel instanceof PooledTunnelCreatorConfig)
+                ? (PooledTunnelCreatorConfig) _outTunnel
+                : (_replyTunnel instanceof PooledTunnelCreatorConfig)
+                    ? (PooledTunnelCreatorConfig) _replyTunnel
+                    : null;
+
+            // Early viability guard
+            if (_replyTunnel == null || _outTunnel == null) {
+                if (_log.shouldWarn())
+                    _log.warn("Insufficient tunnels to test " + _cfg + " with \n* " + _replyTunnel + " / " + _outTunnel);
+                ctx.statManager().addRateData("tunnel.testAborted", _cfg.getLength());
+                CONCURRENT_TESTS.decrementAndGet();
+                cleanupTunnelTracking();
+                decrementTotalJobs(); // Clean up total counter
+                return;
+            }
+
+            int testPeriod = getTestPeriod();
+            long testExpiration = now + testPeriod;
+
+            DeliveryStatusMessage m = new DeliveryStatusMessage(ctx);
+            m.setArrival(now);
+            m.setMessageExpiration(testExpiration);
+            m.setMessageId(ctx.random().nextLong(I2NPMessage.MAX_ID_VALUE));
+
+            ReplySelector sel = new ReplySelector(m.getMessageId(), testExpiration);
+            OnTestReply onReply = new OnTestReply();
+            OnTestTimeout onTimeout = new OnTestTimeout(now);
+            OutNetMessage msg = ctx.messageRegistry().registerPending(sel, onReply, onTimeout);
+            onReply.setSentMessage(msg);
+
+            boolean sendSuccess = sendTest(m, testPeriod);
+            if (!sendSuccess) {
+                CONCURRENT_TESTS.decrementAndGet();
+                cleanupTunnelTracking();
+                // Try to reschedule - if it fails, clean up total counter
+                if (!scheduleRetest(false)) {
+                    decrementTotalJobs();
+                }
+                return;
+            }
+        } catch (Throwable t) {
+            // Ensure cleanup on any exception including interruption
+            if (concurrentTestStarted) {
+                CONCURRENT_TESTS.decrementAndGet();
+            }
+            cleanupTunnelTracking();
+            decrementTotalJobs();
+            throw t;
         }
+        // Note: Normal completion (sendSuccess=true) relies on OnTestReply/OnTestTimeout
+        // to decrement CONCURRENT_TESTS and handle TOTAL_TEST_JOBS decrement
+        // This try-finally only handles abnormal exits (timeout/interruption/exception)
     }
 
     /**

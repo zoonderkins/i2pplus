@@ -133,7 +133,7 @@ msgstr "Floodfill"
 msgid "Show all routers with this capability in the NetDb"
 msgstr "Näytä kaikki tällä ominaisuudella varustetut reitittimet NetDb:ssä"
 
-msgid "No transports (hidden or starting up?)"
+msgid "No transports"
 msgstr "Ei kuljetuksia (piilotettu vai käynnistymässä?)"
 
 msgid "Unsupported signature type"
@@ -771,11 +771,17 @@ msgstr "poista esto nyt"
 msgid "No bans currently active"
 msgstr "Ei tällä hetkellä voimassa olevia kieltoja"
 
+msgid "Country"
+msgstr "Maa"
+
 msgid "Reason"
 msgstr "Syy"
 
-msgid "Router Hash"
-msgstr "Reitittimen tiiviste"
+msgid "IP Address"
+msgstr "IP-osoite"
+
+msgid "Hostname"
+msgstr "Isäntänimi"
 
 msgid "Expiry"
 msgstr "Vanhenee"
@@ -1528,6 +1534,14 @@ msgstr "Uudelleenkäynnistä"
 msgid "Shutdown"
 msgstr "Sammuta"
 
+#, java-format
+msgid "Deferring restart for {0} until all servers have stopped"
+msgstr ""
+
+#, java-format
+msgid "Deferring shutdown for {0} until all servers have stopped"
+msgstr ""
+
 msgid "Restart imminent"
 msgstr "Uudelleenkäynnistys välitön"
 
@@ -2185,9 +2199,6 @@ msgstr "Verkkojen välinen mikrobloggaaminen"
 msgid "Alternative privacy-focused front-end for Reddit"
 msgstr "Vaihtoehtoinen yksityisyyteen keskittyvä käyttöliittymä Redditille"
 
-msgid "AI Image generation & Chat hub"
-msgstr "TE-kuvien ja keskusteluhubi"
-
 msgid "IRC Logs for multiple networks"
 msgstr "IRC-lokit useille verkoille"
 
@@ -2438,9 +2449,6 @@ msgstr "Identiteetti"
 msgid "Network Database entry"
 msgstr "Verkkotietokannan merkintä"
 
-msgid "IP Address"
-msgstr "IP-osoite"
-
 msgid "UDP Port"
 msgstr "UDP-portti"
 
@@ -2535,9 +2543,6 @@ msgstr "Reititin Transport Osoitteet"
 msgid "{0} is used for outbound connections only"
 msgstr "{0} käytetään vain lähteviin yhteyksiin"
 
-msgid "Job runners"
-msgstr "Job juoksijat"
-
 msgid "Active jobs"
 msgstr "Aktiiviset työt"
 
@@ -2547,6 +2552,12 @@ msgstr "aloitettiin {0} sitten"
 
 msgid "Completed jobs"
 msgstr "Juuri päättyneet työt"
+
+msgid "Runners"
+msgstr "Juoksijat"
+
+msgid "finished just now"
+msgstr "juuri päättynyt"
 
 #, java-format
 msgid "finished {0} ago"
@@ -2565,17 +2576,29 @@ msgstr "Aikataulutetut tehtävät"
 msgid "{0} starting in {1}"
 msgstr "{0} alkaa {1}"
 
-msgid "DELAYED"
-msgstr "VIIVE"
-
-msgid "OUT OF ORDER"
-msgstr "POIS KÄYTÖSTÄ"
-
 msgid "Queue Totals"
 msgstr "Jonon kokonaissummat"
 
-msgid "Job Statistics (excluding single-shot jobs)"
-msgstr "Työtilastot (pois lukien yksittäiset työt)"
+msgid "Job Statistics"
+msgstr "Työn tilastot"
+
+msgid "last minute"
+msgstr "viime minuutti"
+
+msgid "Job Lag"
+msgstr "Tehtävän viive"
+
+msgid "AVG"
+msgstr "AVG"
+
+msgid "PEAK"
+msgstr "HUIPP"
+
+msgid "All Stats"
+msgstr "Kaikki tilastot"
+
+msgid "Last 60s"
+msgstr "Viimeiset 60s"
 
 msgid "Job"
 msgstr "Työ"
@@ -2645,9 +2668,6 @@ msgstr "esim. f tai XOfR"
 
 msgid "Cost"
 msgstr "Hinta"
-
-msgid "Country"
-msgstr "Maa"
 
 msgid "Country Codes"
 msgstr "Maakoodit"
@@ -2919,9 +2939,6 @@ msgstr "Piilotettu"
 
 msgid "Published"
 msgstr "Julkaistu"
-
-msgid "Hostname"
-msgstr "Isäntänimi"
 
 msgid "Whois"
 msgstr "Whois"
@@ -4066,11 +4083,11 @@ msgstr "Työn viive"
 msgid "Message delay"
 msgstr "Viestin viive"
 
-msgid "Average job delay / maximum delay"
-msgstr "Keskimääräinen työn viive / enimmäisviive"
+msgid "Average / peak job delay (last minute)"
+msgstr "Keskimääräinen / huippu työn viive (viime minuutti)"
 
-msgid "Average delay before scheduled jobs are run"
-msgstr "Keskimääräinen viive ennen ajoitettujen töiden suorittamista"
+msgid "Average / max delay before scheduled jobs are run"
+msgstr "Keskimääräinen / maksimi viive ennen ajastettujen töiden suorittamista"
 
 msgid "Indicates how quickly outbound messages to other I2P routers are sent"
 msgstr "Ilmaisee, kuinka nopeasti lähtevät viestit muille I2P-reitittimille lähetetään"
@@ -4382,9 +4399,6 @@ msgstr "tulvat"
 msgid "MIN"
 msgstr "MIN"
 
-msgid "AVG"
-msgstr "AVG"
-
 msgid "MEDIAN"
 msgstr "MEDIAANI"
 
@@ -4475,14 +4489,6 @@ msgstr "armonaika"
 msgid "Tunnel identity"
 msgstr "Tunnelin identiteetti"
 
-#, java-format
-msgid "Limited display to the {0} tunnels with the highest usage"
-msgstr "Rajoitettu näyttö {0} tunneliin, joissa käytetään eniten"
-
-#, java-format
-msgid "Limited display to the {0} most recent tunnels"
-msgstr "Rajoitettu näyttö {0} viimeisimpään tunneliin"
-
 msgid "Lifetime bandwidth usage"
 msgstr "Elinikäinen kaistanleveyden käyttö"
 
@@ -4501,6 +4507,9 @@ msgstr "Siirtotunnelit vertaisen mukaan (Top {0})"
 
 msgid "Address"
 msgstr "Osoite"
+
+msgid "Messages"
+msgstr "Viestit"
 
 msgid "All Tunnels by Peer"
 msgstr "Peerin kaikki tunnelit"
@@ -4536,6 +4545,15 @@ msgstr "saapuva vai lähtevä?"
 msgid "In/Out"
 msgstr "Sisään/Ulos"
 
+msgid "Tunnel test status"
+msgstr "Tunnelitestin tila"
+
+msgid "Round trip time for last test"
+msgstr "Kierrosaika viimeiselle testille"
+
+msgid "Latency"
+msgstr "Viive"
+
 msgid "Gateway"
 msgstr "Yhdyskäytävä"
 
@@ -4544,6 +4562,24 @@ msgstr "Osallistujat"
 
 msgid "Endpoint"
 msgstr "Päätepiste"
+
+msgid "Rejected as duplicate"
+msgstr "Hylätty tuplana"
+
+msgid "Test successful"
+msgstr "Testi onnistui"
+
+msgid "Test in progress"
+msgstr "Testi käynnissä"
+
+msgid "Test failing (1 failure)"
+msgstr "Testi epäonnistuu (1 epäonnistuminen)"
+
+msgid "Test failed (2 consecutive failures)"
+msgstr "Testi epäonnistui (2 peräkkäistä epäonnistumista)"
+
+msgid "Not yet tested"
+msgstr "Ei vielä testattu"
 
 msgid "Locally hosted tunnel"
 msgstr "Paikallisesti isännöity tunneli"
@@ -5215,6 +5251,9 @@ msgstr "Vertaispäällikkö"
 
 msgid "Manual Peer Controls"
 msgstr "Manuaaliset vertaisohjaukset"
+
+msgid "Router Hash"
+msgstr "Reitittimen tiiviste"
 
 msgid "Manually Ban / Unban a Peer"
 msgstr "Estä (ban) tai poista vertaissolmun esto manuaalisesti."
@@ -5914,8 +5953,8 @@ msgstr "Perustusajankohdan jälkeen voit tässä asetuksessa (minuutteina) mää
 msgid "This setting, when set to true, will block direct communication from all routers in your own country and add them to your banlist until your router restarts. [Default is false]"
 msgstr "Tämä asetus, kun on asetettu tosioksi, estää suoranaisen viestinnän reitittimen ja lisää kaikki oman maan reitittimet ja lisää ne estä kieltolistalle, kunnesi reititin käynnistyy uudelleen. [Oletusarvo on false]"
 
-msgid "This setting, when set to true, will block direct communication from all X tier routers that publish a G congestion cap and are neither reachable or unreachable, adding them to the session banlist. Note that advanced mode must be enabled for this setting to take effect. [Default is false]"
-msgstr "Tämä asetus, kun on asetettu tosioksi, estää suoranaisen X-tason reitittimien viestinnän reitittimen ja lisää ne estä kieltolistalle, jos ne eivät ole saavutettavissa eikä ole saavutettavissa. Huomaa, että kehitty tila on oltava käytössä tähän asetuksen voimaanastumiseksi. [Oletusarvo on false]"
+msgid "This setting, when set to true, will block direct communication from all X tier routers that publish a G congestion cap (no transit tunnels), adding them to the session banlist. [Default is true]"
+msgstr "Tämä asetus, kun se on asetettu arvoon true, estää suoran viestinnän kaikilta X-tason reitittimiltä, jotka julkaisevat G-ruuhkakaton (ei transit-tunneleita), ja lisää ne istunnon kieltolistalle. [Oletus on true]"
 
 msgid "This setting permits disabling SSU tests to determine if your router is firewalled and can be enabled for routers that are definitely not firewalled but are experiencing intermittent firewalling issues. In the event that testing is disabled, both SSU and NTCP should report your current public ip address on <a href=/info>the router info page</a>. [Restart required]"
 msgstr "Tämä asetus sallii SSU-testien poistamisen reitittimesi suojauksen määrittämiseksi ja voidaan ottaa käyttöön reitittimille, jotka eivät ole ehdottomasti suojattuja, mutta kokevat satunnaista palomuuriongelmaa. Jos testi on poistettu käytöstä, sekä SSU että NTCP raportoivasta nykyisestä julkisesta ip-osoitteestasi <a href=/info>reitittimen tietosivulla</a>. [Vaaditaan uudelleenkäynnistys]"
@@ -7455,9 +7494,6 @@ msgstr "Muiden käyttäjien puolesta reitittämiesi osallistuvien tunnelien mä�
 msgid "Some basic indications of router overload:"
 msgstr "Joitakin perusmerkkejä reitittimen ylikuormituksesta:"
 
-msgid "Job Lag"
-msgstr "Tehtävän viive"
-
 msgid "How long jobs are waiting before execution. The job queue is listed on the <a href='/jobs'>Jobs page</a>. Unfortunately, there are several other job queues in the router that may be congested, and their status is not available in the router console. The job lag should generally be zero. If it is consistently higher than 500ms, your computer is very slow, your network is experiencing connectivity issues, or the router has serious problems. <a href='/configstats#jobQueue.jobLag'>[Enable graphing]</a>."
 msgstr "Kuinka kauan työt odottavat ennen suoritusta. Työjonot on lueteltu <a href='/jobs'>Työt-sivulla</a>. Valitettavasti reitittimessä on useita muita työjonoja, jotka saattavat olla ruuhkautuneita, eikä niiden tilaa ole saatavilla reitittimen ohjauskeskuksesta. Työn viiveen tulisi yleensä olla nolla. Jos se on jatkuvasti yli 500 ms, tietokoneesi on erittäin hidas, verkossasi on yhteyshäiriöitä tai reitittimessä on vakavia ongelmia. <a href='/configstats#jobQueue.jobLag'>[Ota käyttöön graafit]</a>."
 
@@ -8090,3 +8126,15 @@ msgstr "Seuraava"
 
 msgid "Finished"
 msgstr "Valmistunut"
+
+
+
+
+
+
+
+
+#, java-format
+
+#, java-format
+
