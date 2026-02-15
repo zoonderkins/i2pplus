@@ -46,7 +46,7 @@ public class TestJob extends JobImpl {
     private int _id;
     private static final int MIN_TEST_PERIOD = 10*1000;
     private static final int MAX_TEST_PERIOD = 20*1000;
-    private static final int MAX_TEST_PERIOD_ATTACK = 30*1000; // 30s during attacks
+    private static final int MAX_TEST_PERIOD_ATTACK = 40*1000; // 40s during attacks (longer timeout for higher latency)
 
     /**
      * Maximum number of tunnel tests that can run concurrently.
@@ -128,6 +128,24 @@ public class TestJob extends JobImpl {
     private static final ConcurrentHashMap<String, AtomicInteger> POOL_TEST_COUNTS = new ConcurrentHashMap<>();
 
     /**
+     * Get the total number of TestJob instances (active + queued) using atomic counter.
+     * This provides more reliable limiting than job queue counting alone.
+     *
+     * @return the total number of TestJob instances
+     */
+    private static int getTotalTestJobCount() {
+        return TOTAL_TEST_JOBS.get();
+    }
+
+    /**
+     * Get stat for total TestJobs - for monitoring
+     * @return current total TestJob count
+     */
+    public static int getTotalTestJobCountStatic() {
+        return TOTAL_TEST_JOBS.get();
+    }
+
+    /**
      * Generate a unique key for a tunnel to track running tests.
      * Uses combination of receive and send tunnel IDs.
      * @param cfg the tunnel configuration
@@ -138,10 +156,12 @@ public class TestJob extends JobImpl {
         try {
             long recvId = cfg.getReceiveTunnelId(0).getTunnelId();
             long sendId = cfg.getSendTunnelId(0).getTunnelId();
-            // Combine both IDs to create a unique key
-            return Long.valueOf((recvId << 32) | (sendId & 0xFFFFFFFFL));
+            if (recvId != 0 && sendId != 0) {
+                return Long.valueOf((recvId << 32) | (sendId & 0xFFFFFFFFL));
+            }
+            return cfg.getInstanceId();
         } catch (Exception e) {
-            return null;
+            return cfg.getInstanceId();
         }
     }
 
@@ -168,18 +188,8 @@ public class TestJob extends JobImpl {
     /** Flag to indicate if this job is valid and should be queued */
     private boolean _valid = true;
 
-    /**
-     * Get the total number of TestJob instances (active + queued) using atomic counter.
-     * This provides more reliable limiting than job queue counting alone.
-     *
-     * @return the total number of TestJob instances
-     */
-    private static int getTotalTestJobCount() {
-        return TOTAL_TEST_JOBS.get();
-    }
-
     /** Ensures total job counter is decremented at most once */
-    private final AtomicBoolean _counted = new AtomicBoolean(true);
+    private final AtomicBoolean _counted = new AtomicBoolean(false);
 
     /**
      * Static method to check if a TestJob should be created and scheduled.
@@ -217,7 +227,7 @@ public class TestJob extends JobImpl {
             log.warn("Tunnel pool is null for config: " + cfg);
         }
 
-        // Try to increment total jobs counter to check limit
+        // Check total job count limit
         int current = TOTAL_TEST_JOBS.get();
         if (current >= maxQueuedTests) {
             if (log.shouldInfo()) {
@@ -259,6 +269,7 @@ public class TestJob extends JobImpl {
             }
         }
 
+        // All validations passed - constructor will increment counter
         return true;
     }
 
@@ -299,6 +310,19 @@ public class TestJob extends JobImpl {
                 return;
             }
         } while (!TOTAL_TEST_JOBS.compareAndSet(current, current - 1));
+    }
+
+    /**
+     * Invalidate a TestJob by tunnel key.
+     * Called when a tunnel is removed from the pool to prevent stale tests from running.
+     * @param tunnelKey the tunnel key (from ExpireLocalTunnelsJob.getTunnelKey)
+     */
+    public static void invalidate(Long tunnelKey) {
+        if (tunnelKey == null) return;
+        TestJob job = RUNNING_TESTS.get(tunnelKey);
+        if (job != null) {
+            job._valid = false;
+        }
     }
 
     /**
@@ -369,29 +393,9 @@ public class TestJob extends JobImpl {
             }
         }
 
-        // Increment total job counter atomically
-        if (!tryIncrementTotalJobs(ctx)) {
-            if (_log.shouldInfo()) {
-                _log.info("Hard limit (" + MAX_TEST_JOB_LIMIT + ") reached -> Not scheduling test for " + cfg);
-            }
-            // Clean up tunnel registration
-            if (tunnelKey != null) {
-                RUNNING_TESTS.remove(tunnelKey, this);
-            }
-            // Clean up pool registration
-            if (_pool != null) {
-                String poolId = getPoolId(_pool);
-                AtomicInteger poolCount = POOL_TEST_COUNTS.get(poolId);
-                if (poolCount != null) {
-                    poolCount.decrementAndGet();
-                    if (poolCount.get() <= 0) {
-                        POOL_TEST_COUNTS.remove(poolId);
-                    }
-                }
-            }
-            _valid = false;
-            return;
-        }
+        // Increment total job counter after successful validation
+        TOTAL_TEST_JOBS.incrementAndGet();
+        _counted.set(true);
         // Start after delay; guard against negative start
         int delay = getDelay();
         delay = Math.max(0, delay);
@@ -408,6 +412,7 @@ public class TestJob extends JobImpl {
     public void runJob() {
         final RouterContext ctx = getContext();
         if (_pool == null || !_pool.isAlive()) {
+            cleanupTunnelTracking();
             decrementTotalJobs();
             return;
         }
@@ -432,6 +437,7 @@ public class TestJob extends JobImpl {
                 _log.warn("Aborted ALL tunnel tests due to high job lag (Max: " + maxLag + "ms) → " + _cfg);
             }
             ctx.statManager().addRateData("tunnel.testAbortedHighLag", _cfg.getLength());
+            cleanupTunnelTracking();
             decrementTotalJobs();
             return; // Exit without rescheduling - test will be rescheduled normally later
         }
@@ -457,6 +463,7 @@ public class TestJob extends JobImpl {
                 _log.warn("Aborted test due to severe max job lag (Max: " + maxLag + " / Avg: " + avgLag + "ms) → " + _cfg);
             }
             ctx.statManager().addRateData("tunnel.testAborted", _cfg.getLength());
+            cleanupTunnelTracking();
             decrementTotalJobs();
             return; // Exit without rescheduling
         }
@@ -554,8 +561,9 @@ public class TestJob extends JobImpl {
                               " (Queued: " + totalCount + ")");
                 }
                 ctx.statManager().addRateData("tunnel.testThrottled", _cfg.getLength());
+                // Always clean up tunnel tracking before returning - scheduleRetest creates a new job
+                cleanupTunnelTracking();
                 if (!scheduleRetest(false)) {
-                    cleanupTunnelTracking();
                     decrementTotalJobs();
                 }
                 return;
@@ -768,14 +776,16 @@ public class TestJob extends JobImpl {
     }
 
     private int getDelay() {
-        // Scale DOWN repeat time with failures to evict failing tunnels sooner
-        int baseDelay = BASE_TEST_DELAY;
+        // During attacks: use slightly lower base delay to test more frequently
+        // but not too aggressive to avoid overwhelming the system
+        boolean isUnderAttack = getContext().profileOrganizer().isLowBuildSuccess();
+        int baseDelay = isUnderAttack ? (BASE_TEST_DELAY * 3 / 4) : BASE_TEST_DELAY; // 45s attack, 60s normal
         int failCount = _cfg.getTunnelFailures();
         int scaled = baseDelay;
         if (failCount > 0) {
             // Test failing tunnels more frequently to confirm and evict them faster
             // Tunnel will be removed after 2 consecutive failures
-            int divisor = Math.min(1 << (failCount - 1), 4); // max 4x faster (22.5s)
+            int divisor = Math.min(1 << (failCount - 1), 4); // max 4x faster
             scaled = baseDelay / divisor;
         }
         // Ensure minimum delay and avoid negative values
@@ -911,9 +921,10 @@ public class TestJob extends JobImpl {
                 if (_log.shouldInfo()) {
                     _log.info("Scheduling recovery test for failed tunnel: " + _cfg);
                 }
+            } else {
+                _failureCount = 0;
+                decrementTotalJobs();
             }
-            _failureCount = 0;
-            decrementTotalJobs();
         }
     }
 
@@ -963,6 +974,14 @@ public class TestJob extends JobImpl {
             return false;
         }
 
+        // Create a new TestJob instance to avoid reentrancy issues
+        // Constructor handles validation and counter increment atomically
+        TestJob newJob = new TestJob(ctx, _cfg, _pool);
+        if (!newJob.isValid()) {
+            // Constructor already decremented counter if invalid
+            return false;
+        }
+
         int delay = getDelay();
         if (asap) {
             delay = Math.min(delay, BASE_TEST_DELAY / 2);
@@ -975,8 +994,8 @@ public class TestJob extends JobImpl {
         // Ensure delay is not negative and set start time properly
         delay = Math.max(0, delay);
         long startTime = ctx.clock().now() + delay;
-        getTiming().setStartAfter(startTime);
-        ctx.jobQueue().addJob(this);
+        newJob.getTiming().setStartAfter(startTime);
+        ctx.jobQueue().addJob(newJob);
         return true;
     }
 
@@ -1020,6 +1039,8 @@ public class TestJob extends JobImpl {
                 testFailed(_successTime);
             }
             _found = true;
+            // Clean up tunnel tracking to prevent memory leak
+            cleanupTunnelTracking();
             CONCURRENT_TESTS.decrementAndGet(); // Decrement counter
             if (_log.shouldDebug()) {
                 _log.debug("Tunnel test reply received for " + _cfg + " (Active concurrent tests: " + CONCURRENT_TESTS.get() + ")");
@@ -1049,6 +1070,8 @@ public class TestJob extends JobImpl {
             if (!_found) {
                 testFailed(getContext().clock().now() - _started);
             }
+            // Clean up tunnel tracking to prevent memory leak
+            cleanupTunnelTracking();
             CONCURRENT_TESTS.decrementAndGet(); // Decrement counter
             if (_log.shouldDebug()) {
                 _log.debug("Tunnel test timeout for " + _cfg + " (Active concurrent tests: " + CONCURRENT_TESTS.get() + ")");
@@ -1078,10 +1101,11 @@ public class TestJob extends JobImpl {
 
     /**
      * Called when the job is dropped due to router overload.
-     * Ensure we clean up the total job counter when dropped.
+     * Ensure we clean up the total job counter and tunnel tracking when dropped.
      */
     @Override
     public void dropped() {
+        cleanupTunnelTracking();
         if (_counted.compareAndSet(true, false)) {
             decrementTotalJobs();
         }

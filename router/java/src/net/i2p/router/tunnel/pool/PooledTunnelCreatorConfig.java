@@ -1,6 +1,7 @@
 package net.i2p.router.tunnel.pool;
 
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 import net.i2p.data.Hash;
 import net.i2p.data.TunnelId;
 import net.i2p.router.RouterContext;
@@ -11,16 +12,25 @@ import net.i2p.util.Log;
  *  Data about a tunnel we created
  */
 public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
+    private static final AtomicLong _instanceCounter = new AtomicLong(0);
+
     private final TunnelPool _pool;
     private final Log _log;
     // we don't store the config, that leads to OOM
     private TunnelId _pairedGW;
-    /** 
+    /**
      * When true, this tunnel is the last one in the pool and should not be removed
      * until a replacement is built. It remains available but is only selected if
      * no other tunnels are available.
      */
     private boolean _lastResort;
+
+    /**
+     * Unique ID for this tunnel instance, used as fallback key in expiration tracking
+     * when tunnel IDs are not yet available (e.g., zero-hop tunnels).
+     * This replaces System.identityHashCode() which can collide.
+     */
+    private final long _instanceId;
 
     /**
      *  Creates a new instance of PooledTunnelCreatorConfig
@@ -32,7 +42,13 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
         super(ctx, length, isInbound, destination);
         _pool = pool;
         _log = ctx.logManager().getLog(PooledTunnelCreatorConfig.class);
+        _instanceId = _instanceCounter.incrementAndGet();
     }
+
+    /**
+     * @return unique instance ID assigned at construction, used for stable key generation
+     */
+    public long getInstanceId() { return _instanceId; }
 
     /** called from TestJob */
     public void testJobSuccessful(int ms) {testSuccessful(ms);}
@@ -47,7 +63,7 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
         // Check if tunnel is recently active - if so, don't penalize for transient failures
         if (isRecentlyActive(60 * 1000)) {
             if (_log.shouldInfo()) {
-                _log.info("Tunnel test failed but tunnel is recently active - not incrementing failure count, keeping for recovery: " + this);
+                _log.info("Test of " + this + " failed but recently active -> Not marking as failed...");
             }
             return true; // Keep testing - tunnel may recover
         }
@@ -67,14 +83,23 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
     public void tunnelFailedFirstHop() {
         if (isInbound() || getLength() <= 1) {return;}
         tunnelFailedCompletely();
-        _pool.tunnelFailed(this, getPeer(1));
+        Hash firstHop = getPeer(1);
+        if (firstHop != null) {
+            _pool.tunnelFailed(this, firstHop);
+        } else {
+            _pool.tunnelFailed(this);
+        }
     }
 
     /**
-     *  @return non-null
+     *  @return non-null defensive copy to prevent mutation of shared pool settings
      */
     @Override
-    public Properties getOptions() {return _pool.getSettings().getUnknownOptions();}
+    public Properties getOptions() {
+        Properties opts = _pool.getSettings().getUnknownOptions();
+        if (opts == null) {return new Properties();}
+        return (Properties) opts.clone();
+    }
 
     /**
      *  @return non-null
@@ -121,9 +146,9 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
     /**
      * Track recent activity to determine if tunnel is actively being used.
      * Used to prevent removing tunnels that have active connections.
+     * Encodes time (high 32 bits) and message count (low 32 bits) atomically.
      */
-    private volatile long _lastActivityTime;
-    private volatile int _lastMessageCount;
+    private volatile long _activitySnapshot;
 
     /**
      * Record that this tunnel was selected/used.
@@ -131,8 +156,9 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
      * @since 0.9.68+
      */
     public void recordActivity() {
-        _lastActivityTime = _context.clock().now();
-        _lastMessageCount = getProcessedMessagesCount();
+        long time = _context.clock().now();
+        long count = getProcessedMessagesCount();
+        _activitySnapshot = (time << 32) | (count & 0xFFFFFFFFL);
     }
 
     /**
@@ -143,10 +169,13 @@ public class PooledTunnelCreatorConfig extends TunnelCreatorConfig {
      * @since 0.9.68+
      */
     public boolean isRecentlyActive(long maxIdleMs) {
+        long snapshot = _activitySnapshot;
         long now = _context.clock().now();
-        int currentMessages = getProcessedMessagesCount();
+        long currentMessages = getProcessedMessagesCount();
+        long savedTime = snapshot >>> 32;
+        int savedCount = (int) snapshot;
         // Active if: used recently OR messages increased since last check
-        return (now - _lastActivityTime < maxIdleMs) || (currentMessages > _lastMessageCount);
+        return (now - savedTime < maxIdleMs) || (currentMessages > savedCount);
     }
 
 }

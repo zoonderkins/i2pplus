@@ -27,6 +27,8 @@ import net.i2p.router.RouterContext;
 import net.i2p.router.TunnelInfo;
 import net.i2p.router.TunnelPoolSettings;
 import net.i2p.router.tunnel.HopConfig;
+import net.i2p.router.tunnel.pool.ExpireLocalTunnelsJob;
+import net.i2p.router.tunnel.pool.TestJob;
 import net.i2p.router.tunnel.TunnelCreatorConfig;
 import net.i2p.stat.Rate;
 import net.i2p.stat.RateAverages;
@@ -548,7 +550,7 @@ public class TunnelPool {
           // Increase limit during attacks when build success is low or zero
           double buildSuccess = _context.profileOrganizer().getTunnelBuildSuccess();
           if (buildSuccess < 0.40) {
-              maxAllowed *= 2; // Double concurrent builds under attack
+              maxAllowed += 2; // Add 2 slots during attack
           }
           return counter.get() < maxAllowed;
       }
@@ -650,6 +652,28 @@ public class TunnelPool {
         long now = _context.clock().now();
         if (_log.shouldDebug()) {_log.debug(toString() + " -> Adding tunnel " + info);}
 
+        // Hard cap: reject tunnels that exceed configured quantity
+        // During attacks, allow +2 extra for redundancy (capped at 16)
+        boolean isUnderAttack = _context.profileOrganizer().isLowBuildSuccess();
+        int configured = _settings.getQuantity();
+        int maxAllowed = isUnderAttack ? Math.min(configured + 2, 16) : configured;
+        int currentCount = 0;
+        _tunnelsLock.lock();
+        try {
+            for (TunnelInfo t : _tunnels) {
+                if (t.getExpiration() > now) currentCount++;
+            }
+        } finally {_tunnelsLock.unlock();}
+        if (currentCount >= maxAllowed) {
+            if (_log.shouldInfo()) {
+                _log.info("Rejecting tunnel - at limit " + maxAllowed + " (configured: " + configured + ", attack: " + isUnderAttack + ") for " + toString());
+            }
+            if (info instanceof PooledTunnelCreatorConfig) {
+                ((PooledTunnelCreatorConfig) info).setDuplicate();
+            }
+            return;
+        }
+
         // Reject 0-hop tunnels for client pools unless explicitly allowed
         if (info.getLength() <= 1 && !_settings.isExploratory() && !_settings.getAllowZeroHop()) {
             if (_log.shouldInfo()) {
@@ -688,7 +712,7 @@ public class TunnelPool {
                 int minimumRequired = Math.max(1, getAdjustedTotalQuantity() / 2);
                 // During attacks (low build success), be more conservative about rejecting duplicates
                 // since replacements are hard to build - keep duplicates to maintain pool
-                boolean isUnderAttack = _context.profileOrganizer().isLowBuildSuccess();
+                isUnderAttack = _context.profileOrganizer().isLowBuildSuccess();
                 if (isUnderAttack) {
                     minimumRequired = Math.max(minimumRequired, getAdjustedTotalQuantity() - 1);
                 }
@@ -1404,7 +1428,7 @@ public class TunnelPool {
     }
 
     /**
-     * Synchronous tunnel removal for use during ExpireJobManager recovery.
+     * Synchronous tunnel removal for use during ExpireLocalTunnelsJob recovery.
      * This removes the tunnel and ensures a new LeaseSet is published BEFORE returning,
      * preventing client connection failures during recovery.
      *
@@ -1436,6 +1460,12 @@ public class TunnelPool {
         if (wasInPool) {
             _manager.tunnelFailed();
             processRemovalStats(java.util.Collections.singletonList(info));
+            if (info instanceof PooledTunnelCreatorConfig) {
+                PooledTunnelCreatorConfig cfg = (PooledTunnelCreatorConfig) info;
+                Long tunnelKey = ExpireLocalTunnelsJob.getTunnelKey(cfg);
+                TestJob.invalidate(tunnelKey);
+                _manager.removeFromExpiration(cfg);
+            }
         }
 
         if (_alive && _settings.isInbound() && !_settings.isExploratory()) {
@@ -1510,6 +1540,13 @@ public class TunnelPool {
             }
 
             if (actuallyRemoved == 0) {return;}
+
+            // Remove tunnels from expiration queue to prevent memory leak
+            for (TunnelInfo info : toRemove) {
+                if (info instanceof PooledTunnelCreatorConfig) {
+                    _manager.removeFromExpiration((PooledTunnelCreatorConfig) info);
+                }
+            }
 
             for (int i = 0; i < actuallyRemoved; i++) {
                 _manager.tunnelFailed();
@@ -1773,9 +1810,10 @@ public class TunnelPool {
         }
 
         if (avg > 0 && avg < TUNNEL_LIFETIME / 3) { // if we're taking less than 200s per tunnel to build
-            // Increase PANIC_FACTOR during attacks to build more aggressively
+            // During attacks: reduce PANIC_FACTOR to build fewer tunnels
+            // We rely on more frequent testing to detect and replace failing tunnels
             boolean isUnderAttack = _context.profileOrganizer().isLowBuildSuccess();
-            final int PANIC_FACTOR = isUnderAttack ? 8 : 4;  // how many builds to kick off when time gets short
+            final int PANIC_FACTOR = isUnderAttack ? 4 : 4;  // keep at 4 both modes, testing will handle failures
             avg += 60*1000; // one minute safety factor
             if (_settings.isExploratory())
                 avg += 60*1000; // two minute safety factor
@@ -1906,13 +1944,14 @@ public class TunnelPool {
             return Math.max(2, standardAmount);
         }
 
-        // Increase multipliers during attacks for more aggressive building
-        int multiplier360 = isUnderAttack ? 2 : 1;  // 6min: normally 0, during attack 1x (early warning)
-        int multiplier270 = isUnderAttack ? 2 : 1;  // 4.5min: 1x normal, 2x attack
-        int multiplier210 = isUnderAttack ? 2 : 1; // 3.5min: 1x normal, 2x attack
-        int multiplier150 = isUnderAttack ? 3 : 2; // 2.5min: 2x normal, 3x attack
-        int multiplier90  = isUnderAttack ? 5 : 4; // 1.5min: 4x normal, 5x attack
-        int multiplier30  = isUnderAttack ? 8 : 6; // 30sec: 6x normal, 8x attack
+        // During attacks: reduce multipliers to build fewer tunnels (they're likely to fail anyway)
+        // Instead, we rely on more frequent testing to detect and replace failing tunnels
+        int multiplier360 = isUnderAttack ? 1 : 1;  // 6min: 1x both modes
+        int multiplier270 = isUnderAttack ? 1 : 1;  // 4.5min: 1x both modes
+        int multiplier210 = isUnderAttack ? 1 : 1;  // 3.5min: 1x both modes
+        int multiplier150 = isUnderAttack ? 1 : 2; // 2.5min: 1x attack, 2x normal
+        int multiplier90  = isUnderAttack ? 2 : 4; // 1.5min: 2x attack, 4x normal
+        int multiplier30  = isUnderAttack ? 3 : 6; // 30sec: 3x attack, 6x normal
 
         int rv = 0;
         int remainingWanted = standardAmount - expireLater;
